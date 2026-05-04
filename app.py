@@ -11,7 +11,14 @@ from collections import Counter
 from utils.cv_processor import AdvancedCVProcessor
 from utils.rag_engine import AdvancedRAGEngine
 from utils.field_config import get_all_fields, get_default_weights
+# Add these lines after your existing imports
+from utils.auth_ui import show_login_ui
+from utils.supabase_client import get_current_user_id
 
+# Check if user is logged in
+if not get_current_user_id():
+    show_login_ui()
+    st.stop()
 # ============================================================ #
 #  PAGE CONFIGURATION                                           #
 # ============================================================ #
