@@ -129,19 +129,19 @@ def sign_in(email: str, password: str) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def sign_in_with_google(redirect_url: Optional[str] = None) -> Dict:
-    supabase = init_supabase()
-    try:
-        response = supabase.auth.sign_in_with_oauth({
-            "provider": "google",
-            "options": {
-                "redirect_to": redirect_url or DEFAULT_REDIRECT_URL,
-                "query_params": {"access_type": "offline", "prompt": "consent"},
-            },
-        })
-        return {"success": True, "url": response.url}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+# def sign_in_with_google(redirect_url: Optional[str] = None) -> Dict:
+#     supabase = init_supabase()
+#     try:
+#         response = supabase.auth.sign_in_with_oauth({
+#             "provider": "google",
+#             "options": {
+#                 "redirect_to": redirect_url or DEFAULT_REDIRECT_URL,
+#                 "query_params": {"access_type": "offline", "prompt": "consent"},
+#             },
+#         })
+#         return {"success": True, "url": response.url}
+#     except Exception as e:
+#         return {"success": False, "error": str(e)}
 
 
 def complete_oauth_from_tokens(access_token: str, refresh_token: str = "") -> Dict:
