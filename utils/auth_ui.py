@@ -9,9 +9,7 @@ import streamlit.components.v1 as components
 from utils.supabase_client import (
     get_current_user_id,
     sign_in,
-    sign_in_with_google,
     sign_up,
-    DEFAULT_REDIRECT_URL,
 )
 
 
@@ -121,27 +119,16 @@ def show_login_ui() -> bool:
             <p class="brand-copy">A focused CV screening workspace for recruiters who need semantic search, weighted scoring, analytics, and clean candidate shortlisting.</p>
             <div class="brand-points">
               <div class="brand-point">Private workspace per authenticated user</div>
-              <div class="brand-point">Google or email authentication with one clean landing flow</div>
+              <div class="brand-point">Email authentication with clean landing flow</div>
               <div class="brand-point">Weighted scoring across skills, experience, education, projects, and certifications</div>
             </div>
           </section>
           <section class="auth-panel">
             <h2 class="auth-title">Sign in</h2>
-            <p class="auth-subtitle">Use Google or email. Both routes now land directly in the dashboard.</p>
+            <p class="auth-subtitle">Use email to sign in or create an account.</p>
         """,
         unsafe_allow_html=True,
     )
-
-    google_clicked = st.button("Continue with Google", use_container_width=True, type="primary")
-    if google_clicked:
-        result = sign_in_with_google(DEFAULT_REDIRECT_URL)
-        if result.get("success") and result.get("url"):
-            st.markdown(f'<meta http-equiv="refresh" content="0; url={html.escape(result["url"], quote=True)}">', unsafe_allow_html=True)
-            st.link_button("Open Google sign-in", result["url"], use_container_width=True)
-            st.stop()
-        st.error(_safe_error(result.get("error", "Google login failed.")))
-
-    st.markdown('<div class="or-line"><span>or continue with email</span></div>', unsafe_allow_html=True)
 
     sign_in_tab, sign_up_tab = st.tabs(["Email sign in", "Create account"])
 
