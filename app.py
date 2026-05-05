@@ -1,890 +1,511 @@
-import streamlit as st
+from __future__ import annotations
+
 import os
+import html
+from collections import Counter
+from datetime import datetime
+from typing import Dict, List
+
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-import json
-import io
-from collections import Counter
+import streamlit as st
 
+from utils.auth_ui import inject_oauth_hash_bridge, show_login_ui
 from utils.cv_processor import AdvancedCVProcessor
-from utils.rag_engine import AdvancedRAGEngine
 from utils.field_config import get_all_fields, get_default_weights
-# Add these lines after your existing imports
-from utils.auth_ui import show_login_ui
-from utils.supabase_client import get_current_user_id
+from utils.rag_engine import AdvancedRAGEngine
+from utils.supabase_client import (
+    complete_oauth_from_tokens,
+    get_current_company_name,
+    get_current_user_email,
+    get_current_user_id,
+    hydrate_session_from_supabase,
+    sign_out,
+)
 
-# Check if user is logged in
-if not get_current_user_id():
-    show_login_ui()
-    st.stop()
-# ============================================================ #
-#  PAGE CONFIGURATION                                           #
-# ============================================================ #
 st.set_page_config(
-    page_title="CV Screening Pro – AI Recruitment Platform",
-    page_icon="🎯",
+    page_title="TalentHire Pro",
+    page_icon="TH",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ============================================================ #
-#  THEME / CSS                                                  #
-# ============================================================ #
+inject_oauth_hash_bridge()
+
+
+def qp_value(name: str, default: str = "") -> str:
+    value = st.query_params.get(name, default)
+    if isinstance(value, list):
+        return value[0] if value else default
+    return value or default
+
+
+if qp_value("access_token"):
+    result = complete_oauth_from_tokens(qp_value("access_token"), qp_value("refresh_token"))
+    st.query_params.clear()
+    if result.get("success"):
+        st.rerun()
+    st.error(result.get("error", "Google authentication failed."))
+    st.stop()
+
+hydrate_session_from_supabase()
+if not get_current_user_id():
+    show_login_ui()
+    st.stop()
+
+
 st.markdown(
     """
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    * { font-family: 'Inter', sans-serif; }
-
-    .main { background-color: #0e1117; }
-
-    .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        font-size: 2.8rem;
-        font-weight: 800;
-        padding: 1rem 0;
-        letter-spacing: -0.02em;
-    }
-    .sub-header { text-align: center; color: #a0a0a0; margin-bottom: 2rem; font-size: 1.1rem; }
-
-    .modern-card {
-        background: #1e1e2e;
-        border-radius: 20px;
-        padding: 1.5rem;
-        box-shadow: 0 10px 40px rgba(0,0,0,.3);
-        border: 1px solid #313244;
-        transition: all .3s;
-    }
-    .modern-card:hover { transform: translateY(-4px); border-color: #667eea; }
-
-    .gradient-metric {
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        border-radius: 20px;
-        padding: 1.2rem;
-        color: white;
-        text-align: center;
-        transition: transform .3s;
-    }
-    .gradient-metric:hover { transform: translateY(-3px); }
-    .gradient-metric-green  { background: linear-gradient(135deg, #00b09b, #96c93d); }
-    .gradient-metric-orange { background: linear-gradient(135deg, #f2994a, #f2c94c); }
-    .gradient-metric-blue   { background: linear-gradient(135deg, #1f77b4, #4a90e2); }
-
-    .metric-value { font-size: 2rem; font-weight: 700; margin: .5rem 0; }
-    .metric-label { font-size: .85rem; opacity: .9; text-transform: uppercase; letter-spacing: 1px; }
-
-    .score-excellent { background: linear-gradient(135deg, #00b09b, #96c93d); color: white;
-                       padding: 4px 12px; border-radius: 50px; font-weight: 600; }
-    .score-good      { background: linear-gradient(135deg, #f2994a, #f2c94c); color: white;
-                       padding: 4px 12px; border-radius: 50px; font-weight: 600; }
-    .score-average   { background: linear-gradient(135deg, #eb3349, #f45c43); color: white;
-                       padding: 4px 12px; border-radius: 50px; font-weight: 600; }
-
-    [data-testid="stSidebar"] { background: #1a1a2e; border-right: 1px solid #313244; }
-
-    .stTabs [data-baseweb="tab-list"] { gap: .5rem; background: #1e1e2e;
-                                        padding: .5rem; border-radius: 12px; }
-    .stTabs [data-baseweb="tab"]      { border-radius: 8px; padding: .5rem 1.2rem;
-                                        font-weight: 500; color: #a0a0a0; }
-    .stTabs [aria-selected="true"]    { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
-
-    .custom-divider {
-        height: 2px;
-        background: linear-gradient(90deg, transparent, #667eea, #764ba2, transparent);
-        margin: 1.5rem 0;
-    }
-
-    .info-box { background: #1e1e2e; border-radius: 16px; padding: 1.2rem;
-                border-left: 5px solid #667eea; color: #e0e0e0; }
-
-    .footer { text-align: center; padding: 2rem; color: #666; font-size: .85rem;
-              border-top: 1px solid #313244; margin-top: 2rem; }
-
-    p, li { color: #e0e0e0; }
-    h1, h2, h3, h4, h5, h6 { color: #ffffff; }
-
-    [data-testid="stMetric"] { background: #1e1e2e; padding: 1rem;
-                                border-radius: 12px; border: 1px solid #313244; }
-
-    .stProgress > div > div { background: linear-gradient(135deg, #667eea, #764ba2); }
-
-    @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(30px); }
-        to   { opacity: 1; transform: translateY(0); }
-    }
-    .fade-in { animation: fadeInUp .6s ease-out; }
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================ #
-#  HELPERS                                                      #
-# ============================================================ #
-def get_score_class(score: float) -> str:
-    if score >= 75:
-        return "score-excellent"
-    elif score >= 55:
-        return "score-good"
-    return "score-average"
-
-
-def get_score_emoji(score: float) -> str:
-    if score >= 75:
-        return "🏆"
-    elif score >= 55:
-        return "⭐"
-    return "📌"
-
-
-def clamp_score(score: float) -> float:
-    """Ensure displayed score is in [0, 100]"""
-    return min(max(score * 100, 0.0), 100.0)
-
-
-def cvs_to_dataframe(cvs: list) -> pd.DataFrame:
-    rows = []
-    for cv in cvs:
-        rows.append(
-            {
-                "Name": cv.get("name", ""),
-                "Email": cv.get("email", ""),
-                "Experience (yrs)": cv.get("years_of_experience", 0),
-                "Level": cv.get("experience_level", ""),
-                "Education": cv.get("education_level", ""),
-                "Skills": ", ".join(cv.get("skills", [])[:10]),
-                "Score (%)": round(clamp_score(cv.get("final_score", 0)), 1),
-                "Match Reason": cv.get("match_reason", ""),
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-# ============================================================ #
-#  SESSION STATE INIT                                           #
-# ============================================================ #
-if "engine" not in st.session_state:
-    with st.spinner("🚀 Initialising AI models – please wait…"):
-        try:
-            st.session_state.engine = AdvancedRAGEngine(
-                model_name="all-mpnet-base-v2",
-                use_reranker=True,
-            )
-            st.session_state.processed_cvs = []
-            st.session_state.selected_field = "Software Engineering"
-            st.session_state.search_results = []
-            st.session_state.favorites = []
-        except Exception as e:
-            st.error(f"⚠️ Error initialising engine: {e}")
-            st.session_state.engine = None
-
-# ============================================================ #
-#  SIDEBAR                                                      #
-# ============================================================ #
-with st.sidebar:
-    st.markdown(
-        """
-        <div style="text-align:center;padding:1rem 0;">
-            <div style="font-size:4rem;">🧑🏻‍🎓</div>
-            <h2 style="color:#667eea;margin:0;">CV Screening Pro</h2>
-            <p style="color:#888;font-size:.8rem;">AI-Powered Recruitment</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-
-    # --- Industry ---
-    st.markdown("### 🏭 Industry")
-    all_fields = get_all_fields()
-    selected_field = st.selectbox(
-        "Select Industry",
-        all_fields,
-        index=all_fields.index(st.session_state.get("selected_field", all_fields[0])),
-        label_visibility="collapsed",
-    )
-    # Persist selected field
-    st.session_state.selected_field = selected_field
-
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-
-    # --- Scoring Weights (load field-specific defaults) ---
-    st.markdown("### ⚖️ Scoring Weights")
-    field_defaults = get_default_weights(selected_field)
-    # Ensure the five standard keys are always present with integer values
-    default_weights = {
-        "education": int(field_defaults.get("education", 20)),
-        "experience": int(field_defaults.get("experience", 30)),
-        "skills": int(field_defaults.get("skills", 30)),
-        "projects": int(field_defaults.get("projects", 10)),
-        "certifications": int(field_defaults.get("certifications", 10)),
-    }
-    # Normalise defaults so they sum to 100
-    total_default = sum(default_weights.values()) or 100
-    default_weights = {
-        k: round(v * 100 / total_default) for k, v in default_weights.items()
-    }
-
-    col_w1, col_w2 = st.columns(2)
-    with col_w1:
-        w_edu  = st.slider("🎓 Education",       0, 100, default_weights["education"],       5)
-        w_exp  = st.slider("💼 Experience",       0, 100, default_weights["experience"],      5)
-    with col_w2:
-        w_ski  = st.slider("🔧 Skills",           0, 100, default_weights["skills"],          5)
-        w_pro  = st.slider("📁 Projects",         0, 100, default_weights["projects"],        5)
-        w_cer  = st.slider("📜 Certifications",   0, 100, default_weights["certifications"],  5)
-
-    weights = {
-        "education":      w_edu,
-        "experience":     w_exp,
-        "skills":         w_ski,
-        "projects":       w_pro,
-        "certifications": w_cer,
-    }
-    total_weight = sum(weights.values())
-    if total_weight != 100:
-        st.warning(f"⚠️ Weights total: {total_weight}% (should be 100%)")
-    else:
-        st.success(f"✅ Weights total: 100%")
-
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-
-    # --- Quick Stats ---
-    st.markdown("### 📊 Stats")
-    if st.session_state.engine:
-        stats = st.session_state.engine.get_statistics()
-        st.metric("📄 Total CVs", stats.get("total_cvs", 0))
-        if stats.get("total_cvs", 0) > 0:
-            st.metric("📈 Avg Experience", f"{stats.get('avg_experience_years', 0):.1f} yrs")
-    else:
-        st.metric("📄 Total CVs", 0)
-
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-
-    if st.button("🗑️ Clear Database", use_container_width=True):
-        if st.session_state.engine:
-            st.session_state.engine.clear_database()
-            st.session_state.processed_cvs = []
-            st.session_state.search_results = []
-            st.session_state.favorites = []
-            st.success("✅ Database cleared!")
-            st.rerun()
-
-# ============================================================ #
-#  HEADER                                                       #
-# ============================================================ #
-st.markdown(
-    """
-    <div class="fade-in">
-        <h1 class="main-header">Professional CV Screening System</h1>
-        <p class="sub-header">AI-Powered Semantic Search | 8 Industries | all-mpnet-base-v2</p>
-    </div>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+      * { font-family: 'Inter', sans-serif; }
+      html, body, [data-testid="stAppViewContainer"] { background: #0b0d12; color: #f4f4f5; }
+      [data-testid="stHeader"] { background: rgba(11,13,18,.72); backdrop-filter: blur(18px); }
+      [data-testid="stSidebar"] { background: #0f1117; border-right: 1px solid rgba(255,255,255,.08); }
+      [data-testid="stSidebar"] * { color: #e5e7eb; }
+      .block-container { padding-top: 1.4rem; max-width: 1480px; }
+      .app-logo {
+        width: 54px; height: 54px; border-radius: 17px; display: grid; place-items: center;
+        color: #fff; font-weight: 900; letter-spacing: -.08em;
+        border: 1px solid rgba(255,255,255,.16);
+        background: linear-gradient(145deg, #050505 0%, #262626 50%, #ffffff 51%, #cfcfcf 100%);
+        box-shadow: 0 18px 42px rgba(0,0,0,.35);
+      }
+      .hero {
+        border: 1px solid rgba(255,255,255,.10); border-radius: 30px; padding: 2rem;
+        background: radial-gradient(circle at 12% 0%, rgba(255,255,255,.12), transparent 32%),
+                    linear-gradient(135deg, rgba(255,255,255,.07), rgba(255,255,255,.025));
+        box-shadow: 0 28px 90px rgba(0,0,0,.34); margin-bottom: 1.2rem;
+      }
+      .hero h1 { font-size: clamp(2.1rem, 4vw, 4.1rem); line-height: .96; letter-spacing: -.07em; margin: .55rem 0 .75rem; color:#fff; }
+      .hero p { color: #a8afbd; font-size: 1.02rem; max-width: 760px; line-height: 1.65; margin: 0; }
+      .chip-row { display:flex; flex-wrap:wrap; gap:.55rem; margin-top:1.1rem; }
+      .chip { border: 1px solid rgba(255,255,255,.11); border-radius: 999px; color:#d7dbe4; padding:.42rem .75rem; background:rgba(255,255,255,.035); font-size:.85rem; }
+      .metric-card, .panel-card {
+        border: 1px solid rgba(255,255,255,.10); border-radius: 22px; background: rgba(255,255,255,.045);
+        padding: 1.1rem; box-shadow: 0 18px 48px rgba(0,0,0,.22);
+      }
+      .metric-label { color:#8f97a8; font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+      .metric-value { color:#fff; font-size:2rem; font-weight:850; margin-top:.35rem; letter-spacing:-.045em; }
+      .metric-help { color:#a5adbb; font-size:.82rem; margin-top:.25rem; }
+      .section-title { font-size:1.25rem; font-weight:800; letter-spacing:-.03em; color:#fff; margin:.4rem 0 .35rem; }
+      .muted { color:#9ca3af; }
+      .candidate-card {
+        border: 1px solid rgba(255,255,255,.10); border-radius: 20px; padding:1rem; margin:.7rem 0;
+        background: linear-gradient(135deg, rgba(255,255,255,.06), rgba(255,255,255,.025));
+      }
+      .candidate-title { font-size:1.08rem; color:#fff; font-weight:800; }
+      .candidate-meta { color:#a8afbd; font-size:.9rem; margin-top:.25rem; }
+      .score-pill { display:inline-block; padding:.25rem .6rem; border-radius:999px; background:#fff; color:#111; font-weight:800; font-size:.82rem; }
+      .sidebar-brand { text-align:left; padding:.5rem .2rem 1rem; }
+      .sidebar-brand h2 { margin:.7rem 0 .15rem; font-size:1.25rem; letter-spacing:-.04em; color:#fff; }
+      .sidebar-brand p { margin:0; color:#9ca3af; font-size:.86rem; }
+      div[data-testid="stTabs"] button { color:#d9dde7; }
+      .stButton button, .stDownloadButton button { border-radius: 12px !important; font-weight: 700 !important; }
+      .stTextInput input, .stTextArea textarea { border-radius: 14px !important; }
+      hr { border-color: rgba(255,255,255,.10); }
+    </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- Top Metrics Row ---
-if st.session_state.engine:
-    stats = st.session_state.engine.get_statistics()
-    total_cvs = stats.get("total_cvs", 0)
-    avg_exp   = stats.get("avg_experience_years", 0.0)
-else:
-    total_cvs = 0
-    avg_exp   = 0.0
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
+def clamp_score(score: float) -> float:
+    try:
+        value = float(score)
+    except Exception:
+        value = 0.0
+    if value <= 1.0:
+        value *= 100.0
+    return min(max(value, 0.0), 100.0)
+
+
+def candidate_key(candidate: Dict) -> str:
+    return f"{candidate.get('filename','')}::{candidate.get('email','')}::{candidate.get('name','')}"
+
+
+def cvs_to_dataframe(cvs: List[Dict]) -> pd.DataFrame:
+    rows = []
+    for cv in cvs:
+        rows.append({
+            "Name": cv.get("name", ""),
+            "Email": cv.get("email", ""),
+            "Phone": cv.get("phone", ""),
+            "Location": cv.get("location", ""),
+            "Experience Years": round(float(cv.get("years_of_experience", 0) or 0), 1),
+            "Experience Level": cv.get("experience_level", ""),
+            "Education Level": cv.get("education_level", ""),
+            "Industry": cv.get("field", ""),
+            "Skills": ", ".join(cv.get("skills", [])[:20]),
+            "Score Percent": round(clamp_score(cv.get("final_score", 0)), 1) if "final_score" in cv else "",
+            "Match Reason": cv.get("match_reason", ""),
+            "File": cv.get("filename", ""),
+        })
+    return pd.DataFrame(rows)
+
+
+def normalized_weights(raw: Dict[str, int]) -> Dict[str, float]:
+    total = sum(raw.values()) or 1
+    return {key: value / total for key, value in raw.items()}
+
+
+def render_metric(label: str, value: str, help_text: str = "") -> None:
     st.markdown(
-        f'<div class="gradient-metric"><div class="metric-label">📄 TOTAL CVs</div>'
-        f'<div class="metric-value">{total_cvs}</div></div>',
-        unsafe_allow_html=True,
-    )
-with c2:
-    st.markdown(
-        f'<div class="gradient-metric gradient-metric-green">'
-        f'<div class="metric-label">📈 AVG EXPERIENCE</div>'
-        f'<div class="metric-value">{avg_exp:.1f} yrs</div></div>',
-        unsafe_allow_html=True,
-    )
-with c3:
-    st.markdown(
-        f'<div class="gradient-metric gradient-metric-orange">'
-        f'<div class="metric-label">🏭 INDUSTRIES</div>'
-        f'<div class="metric-value">{len(get_all_fields())}</div></div>',
-        unsafe_allow_html=True,
-    )
-with c4:
-    st.markdown(
-        f'<div class="gradient-metric gradient-metric-blue">'
-        f'<div class="metric-label">🤖 MODEL</div>'
-        f'<div class="metric-value" style="font-size:1rem;padding-top:.6rem;">mpnet-v2</div></div>',
+        f"""
+        <div class="metric-card">
+          <div class="metric-label">{html.escape(label)}</div>
+          <div class="metric-value">{html.escape(str(value))}</div>
+          <div class="metric-help">{html.escape(help_text)}</div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
-# ============================================================ #
-#  TABS                                                         #
-# ============================================================ #
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["📤 Upload CVs", "🔍 Search", "📊 Analytics", "📋 All CVs", "⭐ Favourites", "ℹ️ Help"]
+def render_candidate(candidate: Dict, index: int, allow_favorite: bool = True) -> None:
+    score = clamp_score(candidate.get("final_score", 0))
+    skills = candidate.get("skills", []) or []
+    with st.container(border=True):
+        cols = st.columns([3.2, 1, 1])
+        with cols[0]:
+            st.markdown(f"**{index}. {candidate.get('name', 'Candidate')}**")
+            st.caption(
+                f"{candidate.get('experience_level', 'Unknown')} | "
+                f"{float(candidate.get('years_of_experience', 0) or 0):.1f} years | "
+                f"{candidate.get('location', 'Not specified')}"
+            )
+        with cols[1]:
+            st.metric("Score", f"{score:.1f}%")
+        with cols[2]:
+            st.metric("Skills", len(skills))
+
+        st.write(candidate.get("match_reason") or candidate.get("summary") or "No explanation available.")
+        if skills:
+            st.caption("Skills: " + ", ".join(skills[:18]))
+
+        details = st.expander("Candidate details")
+        with details:
+            d1, d2, d3 = st.columns(3)
+            d1.write(f"Email: {candidate.get('email', 'Not provided')}")
+            d2.write(f"Phone: {candidate.get('phone', 'Not provided')}")
+            d3.write(f"File: {candidate.get('filename', 'Not available')}")
+            st.write(f"Education: {candidate.get('education_level', 'Not specified')}")
+            st.write(f"LinkedIn: {candidate.get('linkedin', 'Not provided')}")
+            st.write(f"GitHub: {candidate.get('github', 'Not provided')}")
+
+        if allow_favorite:
+            fav_keys = st.session_state.setdefault("favorite_keys", set())
+            key = candidate_key(candidate)
+            if key in fav_keys:
+                st.caption("Shortlisted")
+            elif st.button("Add to shortlist", key=f"fav_{index}_{key}"):
+                st.session_state.setdefault("favorites", []).append(candidate)
+                fav_keys.add(key)
+                st.rerun()
+
+
+user_id = get_current_user_id() or "default"
+if st.session_state.get("engine_user_id") != user_id or "engine" not in st.session_state:
+    with st.spinner("Loading recruitment engine..."):
+        st.session_state.engine = AdvancedRAGEngine(
+            model_name="all-mpnet-base-v2",
+            use_reranker=True,
+            session_id=user_id,
+        )
+        st.session_state.engine_user_id = user_id
+        st.session_state.setdefault("processed_cvs", [])
+        st.session_state.setdefault("search_results", [])
+        st.session_state.setdefault("favorites", [])
+        st.session_state.setdefault("favorite_keys", set())
+
+engine = st.session_state.engine
+all_fields = get_all_fields()
+if "selected_field" not in st.session_state or st.session_state.selected_field not in all_fields:
+    st.session_state.selected_field = "Software Engineering" if "Software Engineering" in all_fields else all_fields[0]
+
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+          <div class="app-logo">TH</div>
+          <h2>TalentHire Pro</h2>
+          <p>AI CV screening workspace</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.divider()
+    st.caption("Signed in")
+    st.write(get_current_company_name())
+    st.caption(get_current_user_email() or "")
+    st.divider()
+
+    selected_field = st.selectbox("Industry", all_fields, index=all_fields.index(st.session_state.selected_field))
+    st.session_state.selected_field = selected_field
+
+    defaults = get_default_weights(selected_field)
+    default_weights = {
+        "education": int(defaults.get("education", 20)),
+        "experience": int(defaults.get("experience", 30)),
+        "skills": int(defaults.get("skills", 30)),
+        "projects": int(defaults.get("projects", 10)),
+        "certifications": int(defaults.get("certifications", 10)),
+    }
+    st.markdown("#### Scoring weights")
+    w_edu = st.slider("Education", 0, 100, default_weights["education"], 5)
+    w_exp = st.slider("Experience", 0, 100, default_weights["experience"], 5)
+    w_ski = st.slider("Skills", 0, 100, default_weights["skills"], 5)
+    w_pro = st.slider("Projects", 0, 100, default_weights["projects"], 5)
+    w_cer = st.slider("Certifications", 0, 100, default_weights["certifications"], 5)
+    raw_weights = {"education": w_edu, "experience": w_exp, "skills": w_ski, "projects": w_pro, "certifications": w_cer}
+    weights = normalized_weights(raw_weights)
+    st.caption(f"Total weight: {sum(raw_weights.values())}%. Scores are normalized automatically.")
+
+    st.divider()
+    if st.button("Clear my CV database", use_container_width=True):
+        engine.clear_database()
+        st.session_state.processed_cvs = []
+        st.session_state.search_results = []
+        st.session_state.favorites = []
+        st.session_state.favorite_keys = set()
+        st.rerun()
+
+    if st.button("Sign out", use_container_width=True):
+        sign_out()
+        st.rerun()
+
+stats = engine.get_statistics() if engine else {"total_cvs": 0}
+total_cvs = int(stats.get("total_cvs", 0) or 0)
+avg_exp = float(stats.get("avg_experience_years", 0) or 0)
+
+st.markdown(
+    f"""
+    <section class="hero">
+      <div class="app-logo">TH</div>
+      <h1>Professional CV screening, without the messy workflow.</h1>
+      <p>Upload resumes, extract structured candidate profiles, search with job descriptions, tune scoring weights, and export shortlists from a private authenticated workspace.</p>
+      <div class="chip-row">
+        <span class="chip">User-isolated database</span>
+        <span class="chip">Google and email sign-in</span>
+        <span class="chip">Semantic search</span>
+        <span class="chip">Weighted ranking</span>
+      </div>
+    </section>
+    """,
+    unsafe_allow_html=True,
 )
 
-# ──────────────────────────────────────────────────────────── #
-#  TAB 1 – UPLOAD                                              #
-# ──────────────────────────────────────────────────────────── #
-with tab1:
-    st.markdown("### 📤 Upload Candidate CVs")
+m1, m2, m3, m4 = st.columns(4)
+with m1:
+    render_metric("Total CVs", str(total_cvs), "Current workspace")
+with m2:
+    render_metric("Average experience", f"{avg_exp:.1f} yrs", "Across uploaded CVs")
+with m3:
+    render_metric("Industries", str(len(all_fields)), "Configured scoring profiles")
+with m4:
+    render_metric("Model", "mpnet-v2", "Semantic embeddings")
 
-    col_info, col_count = st.columns([2, 1])
-    with col_info:
-        st.markdown(
-            """
-            <div class="info-box">
-                <strong>⚡ Quick Info:</strong><br>
-                • Supported formats: PDF, DOCX, TXT<br>
-                • Embedding model: all-mpnet-base-v2 (768 D)<br>
-                • Batch upload supported – drop multiple files at once
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with col_count:
-        st.markdown(
-            f"""
-            <div class="modern-card" style="text-align:center;">
-                <div style="font-size:2rem;">📁</div>
-                <div style="font-size:1.5rem;font-weight:bold;color:white;">{total_cvs}</div>
-                <div style="color:#a0a0a0;">CVs in Database</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+upload_tab, search_tab, analytics_tab, all_tab, shortlist_tab, help_tab = st.tabs(
+    ["Upload", "Search", "Analytics", "All CVs", "Shortlist", "Help"]
+)
 
+with upload_tab:
+    st.markdown('<div class="section-title">Upload candidate CVs</div>', unsafe_allow_html=True)
+    st.caption("Supported formats: PDF, DOCX, TXT. Keep files clean and text-readable for best extraction accuracy.")
     uploaded_files = st.file_uploader(
-        "Drop CV files here or click to browse",
+        "CV files",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
 
     if uploaded_files:
-        ci1, ci2, ci3 = st.columns(3)
-        with ci1:
-            st.info(f"📄 Files selected: {len(uploaded_files)}")
-        with ci2:
-            total_mb = sum(f.size for f in uploaded_files) / (1024 * 1024)
-            st.info(f"💾 Total size: {total_mb:.2f} MB")
-        with ci3:
-            fmts = {f.name.rsplit(".", 1)[-1].upper() for f in uploaded_files}
-            st.info(f"📑 Formats: {', '.join(fmts)}")
+        st.write(f"Selected files: {len(uploaded_files)}")
 
-        if st.button("🚀 Process CVs", use_container_width=True):
-            if not st.session_state.engine:
-                st.error("⚠️ Engine not initialised – check your installation.")
-            else:
-                progress_bar = st.progress(0)
-                status_placeholder = st.empty()
-                processor = AdvancedCVProcessor(field=selected_field)
-                os.makedirs("data/cvs", exist_ok=True)
+    if uploaded_files and st.button("Process CVs", use_container_width=True, type="primary"):
+        processor = AdvancedCVProcessor(field=selected_field)
+        os.makedirs("data/cvs", exist_ok=True)
+        progress_bar = st.progress(0)
+        status = st.empty()
+        processed = 0
+        errors = []
 
-                processed_count = 0
-                errors: list = []
+        for idx, file in enumerate(uploaded_files):
+            status.write(f"Processing {idx + 1}/{len(uploaded_files)}: {file.name}")
+            try:
+                safe_name = os.path.basename(file.name).replace("/", "_").replace("\\", "_")
+                path = os.path.join("data", "cvs", safe_name)
+                with open(path, "wb") as handle:
+                    handle.write(file.getbuffer())
+                cv_data = processor.process(path, safe_name, field=selected_field)
+                engine.add_cv(cv_data, field=selected_field)
+                st.session_state.processed_cvs.append(cv_data)
+                processed += 1
+            except Exception as exc:
+                errors.append(f"{file.name}: {exc}")
+            progress_bar.progress((idx + 1) / len(uploaded_files))
 
-                for idx, uploaded_file in enumerate(uploaded_files):
-                    status_placeholder.text(
-                        f"Processing {idx + 1}/{len(uploaded_files)}: {uploaded_file.name}"
-                    )
-                    try:
-                        file_path = os.path.join("data/cvs", uploaded_file.name)
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
+        status.empty()
+        progress_bar.empty()
+        if processed:
+            st.success(f"Processed {processed} CV file(s).")
+        if errors:
+            with st.expander("Files that failed"):
+                for error in errors:
+                    st.error(error)
+        st.rerun()
 
-                        cv_data = processor.process(
-                            file_path, uploaded_file.name, field=selected_field
-                        )
-                        st.session_state.engine.add_cv(cv_data, field=selected_field)
-                        st.session_state.processed_cvs.append(cv_data)
-                        processed_count += 1
-
-                    except Exception as e:
-                        errors.append(f"{uploaded_file.name}: {e}")
-
-                    progress_bar.progress((idx + 1) / len(uploaded_files))
-
-                status_placeholder.empty()
-                progress_bar.empty()
-
-                if processed_count:
-                    st.success(f"✅ Successfully processed {processed_count} CV(s)!")
-                    st.balloons()
-                    st.rerun()
-                if errors:
-                    with st.expander(f"❌ {len(errors)} file(s) failed"):
-                        for err in errors:
-                            st.error(err)
-
-# ──────────────────────────────────────────────────────────── #
-#  TAB 2 – SEARCH                                              #
-# ──────────────────────────────────────────────────────────── #
-with tab2:
-    st.markdown("### 🔍 Search for Candidates")
-
+with search_tab:
+    st.markdown('<div class="section-title">Search candidates</div>', unsafe_allow_html=True)
     if total_cvs == 0:
-        st.warning("⚠️ No CVs in database. Please upload CVs first (Tab 1).")
+        st.info("Upload CVs before running search.")
     else:
-        col_q, col_opts = st.columns([3, 1])
-        with col_q:
+        q_col, opt_col = st.columns([3, 1])
+        with q_col:
             query = st.text_area(
-                "Job Description / Search Query",
-                placeholder="e.g. Senior Python developer with 5+ years in Machine Learning and AWS",
-                height=110,
+                "Job description or hiring criteria",
+                height=150,
+                placeholder="Example: Senior Python engineer with FastAPI, PostgreSQL, Docker, cloud deployment, and 4+ years of experience.",
             )
-        with col_opts:
-            top_k       = st.number_input("Max results", 1, 30, 5)
-            use_rerank  = st.checkbox("Use re-ranking", value=True)
-            min_score   = st.slider("Min match %", 0, 100, 0, 5)
+        with opt_col:
+            top_k = int(st.number_input("Max results", min_value=1, max_value=50, value=10, step=1))
+            use_rerank = st.checkbox("Use re-ranking", value=True)
+            min_score = st.slider("Minimum score", 0, 100, 0, 5)
 
-        with st.expander("💡 Example queries"):
-            ex = {
-                "Software Engineering": (
-                    "Senior Python developer with machine learning and AWS experience\n"
-                    "Full-stack engineer with React, Node.js, 3–5 years\n"
-                    "DevOps engineer with Kubernetes and CI/CD pipelines"
-                ),
-                "Pharmacy": (
-                    "Clinical pharmacist with oncology experience\n"
-                    "Licensed pharmacist with MTM certification\n"
-                    "Pharmacy manager with retail background"
-                ),
-                "Teaching & Education": (
-                    "Experienced maths teacher with curriculum development skills\n"
-                    "ESL certified teacher with classroom management experience"
-                ),
-            }
-            st.markdown(ex.get(selected_field, "Senior specialist with 5+ years experience"))
-
-        if st.button("🎯 Search Candidates", use_container_width=True):
+        if st.button("Search candidates", use_container_width=True, type="primary"):
             if not query.strip():
-                st.error("❌ Please enter a search query.")
-            elif not st.session_state.engine:
-                st.error("⚠️ Engine not initialised.")
+                st.error("Enter a job description or search criteria.")
             else:
-                with st.spinner("🔍 Searching and ranking candidates…"):
-                    results = st.session_state.engine.search_with_weights(
-                        query=query,
+                with st.spinner("Scoring candidates..."):
+                    results = engine.search_with_weights(
+                        query=query.strip(),
                         field=selected_field,
                         weights=weights,
                         top_k=top_k,
                         use_reranking=use_rerank,
                     )
+                st.session_state.search_results = [r for r in results if clamp_score(r.get("final_score", 0)) >= min_score]
 
-                # Filter by minimum score
-                results = [r for r in results if clamp_score(r.get("final_score", 0)) >= min_score]
-                st.session_state.search_results = results
+        results = st.session_state.get("search_results", [])
+        if results:
+            st.success(f"Found {len(results)} candidate(s).")
+            df_results = cvs_to_dataframe(results)
+            st.download_button(
+                "Export search CSV",
+                df_results.to_csv(index=False).encode("utf-8"),
+                f"search_results_{datetime.now():%Y%m%d_%H%M%S}.csv",
+                "text/csv",
+                use_container_width=True,
+            )
+            for idx, candidate in enumerate(results, 1):
+                render_candidate(candidate, idx, allow_favorite=True)
+        elif st.session_state.get("search_results") == [] and total_cvs > 0:
+            st.caption("No active search results yet.")
 
-                if results:
-                    st.success(f"✅ Found {len(results)} matching candidate(s)!")
-
-                    # Score bar chart
-                    if len(results) > 1:
-                        scores_pct = [clamp_score(r["final_score"]) for r in results]
-                        fig = px.bar(
-                            x=[r["name"] for r in results],
-                            y=scores_pct,
-                            title="Candidate Match Scores (%)",
-                            labels={"x": "Candidate", "y": "Score (%)"},
-                            color=scores_pct,
-                            color_continuous_scale="RdYlGn",
-                            template="plotly_dark",
-                        )
-                        fig.update_layout(showlegend=False, height=320, coloraxis_showscale=False)
-                        st.plotly_chart(fig, use_container_width=True)
-
-                    # Export button
-                    df_results = cvs_to_dataframe(results)
-                    csv_data = df_results.to_csv(index=False).encode("utf-8")
-                    st.download_button(
-                        "📥 Export Results (CSV)",
-                        data=csv_data,
-                        file_name=f"search_results_{datetime.now():%Y%m%d_%H%M%S}.csv",
-                        mime="text/csv",
-                    )
-
-                    # Candidate cards
-                    for idx, cand in enumerate(results, 1):
-                        score_pct = clamp_score(cand["final_score"])
-                        emoji = get_score_emoji(score_pct)
-
-                        with st.expander(
-                            f"{emoji} #{idx} – {cand['name']}  |  Match: {score_pct:.1f}%",
-                            expanded=(idx == 1),
-                        ):
-                            m1, m2, m3, m4 = st.columns(4)
-                            with m1:
-                                st.metric("💼 Experience", f"{cand['years_of_experience']:.0f} yrs")
-                            with m2:
-                                st.metric("🎓 Education", cand.get("education_level", "N/A"))
-                            with m3:
-                                st.metric("🔧 Skills", len(cand.get("skills", [])))
-                            with m4:
-                                st.metric("📊 Score", f"{score_pct:.1f}%")
-
-                            st.markdown("---")
-
-                            # Score breakdown radar (component scores)
-                            comp = cand.get("component_scores", {})
-                            if comp:
-                                comp_names  = list(comp.keys())
-                                comp_values = [round(v * 100, 1) for v in comp.values()]
-                                fig_radar = go.Figure(
-                                    go.Scatterpolar(
-                                        r=comp_values,
-                                        theta=comp_names,
-                                        fill="toself",
-                                        line_color="#667eea",
-                                    )
-                                )
-                                fig_radar.update_layout(
-                                    polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-                                    showlegend=False,
-                                    height=280,
-                                    template="plotly_dark",
-                                    margin=dict(l=30, r=30, t=30, b=30),
-                                )
-                                st.plotly_chart(fig_radar, use_container_width=True)
-
-                            st.markdown("**🎯 Why this candidate matches:**")
-                            st.info(cand.get("match_reason", "Strong overall match"))
-
-                            # Contact info
-                            ci1, ci2, ci3 = st.columns(3)
-                            with ci1:
-                                st.caption(f"📧 {cand.get('email', 'N/A')}")
-                            with ci2:
-                                st.caption(f"📍 {cand.get('location', 'N/A')}")
-                            with ci3:
-                                st.caption(f"🔗 {cand.get('linkedin', 'N/A')}")
-
-                            # Skills chips
-                            if cand.get("skills"):
-                                st.markdown("**🔧 Skills:**")
-                                st.caption("  |  ".join(cand["skills"][:15]))
-
-                            # Favourite button
-                            fav_key = f"fav_{cand['filename']}_{idx}"
-                            if st.button("⭐ Add to Favourites", key=fav_key):
-                                already = any(
-                                    f.get("filename") == cand.get("filename")
-                                    for f in st.session_state.favorites
-                                )
-                                if not already:
-                                    st.session_state.favorites.append(cand)
-                                    st.success("Added to favourites!")
-                                else:
-                                    st.info("Already in favourites.")
-                else:
-                    st.info("ℹ️ No candidates matched. Try a different query or lower the minimum score.")
-        elif not st.session_state.get("search_results"):
-            st.info("👆 Enter a job description above and click **Search Candidates**")
-
-# ──────────────────────────────────────────────────────────── #
-#  TAB 3 – ANALYTICS                                           #
-# ──────────────────────────────────────────────────────────── #
-with tab3:
-    st.markdown("### 📊 Analytics Dashboard")
-
+with analytics_tab:
+    st.markdown('<div class="section-title">Analytics dashboard</div>', unsafe_allow_html=True)
     if total_cvs == 0:
-        st.info("📊 Upload CVs to see analytics and insights.")
-    elif st.session_state.engine:
-        stats = st.session_state.engine.get_statistics()
+        st.info("Upload CVs to generate analytics.")
+    else:
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            st.metric("Total CVs", total_cvs)
+        with a2:
+            st.metric("Average experience", f"{avg_exp:.1f} years")
+        with a3:
+            st.metric("Active industry", selected_field)
 
-        # Overview
-        oa1, oa2, oa3 = st.columns(3)
-        with oa1:
-            st.metric("Total CVs", stats.get("total_cvs", 0))
-        with oa2:
-            st.metric("Avg Experience", f"{stats.get('avg_experience_years', 0):.1f} yrs")
-        with oa3:
-            st.metric("Industries", len(stats.get("by_field", {})))
+        c1, c2 = st.columns(2)
+        with c1:
+            by_field = stats.get("by_field", {}) or {}
+            if by_field:
+                fig = px.pie(names=list(by_field.keys()), values=list(by_field.values()), title="CVs by industry", template="plotly_dark", hole=.45)
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            by_level = stats.get("by_experience_level", {}) or {}
+            if by_level:
+                fig = px.bar(x=list(by_level.keys()), y=list(by_level.values()), title="CVs by experience level", template="plotly_dark")
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_title="Level", yaxis_title="Count")
+                st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("---")
+        all_cvs_for_skills = engine.get_all_cvs()
+        skills_counter = Counter(skill for cv in all_cvs_for_skills for skill in (cv.get("skills") or []))
+        if skills_counter:
+            top_skills = skills_counter.most_common(15)
+            fig = px.bar(x=[x[0] for x in top_skills], y=[x[1] for x in top_skills], title="Top extracted skills", template="plotly_dark")
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_title="Skill", yaxis_title="Mentions")
+            st.plotly_chart(fig, use_container_width=True)
 
-        row1, row2 = st.columns(2)
-
-        # CVs by Field
-        with row1:
-            if stats.get("by_field"):
-                fig_field = px.pie(
-                    names=list(stats["by_field"].keys()),
-                    values=list(stats["by_field"].values()),
-                    title="CVs by Industry",
-                    template="plotly_dark",
-                    hole=0.4,
-                )
-                st.plotly_chart(fig_field, use_container_width=True)
-
-        # CVs by Experience Level
-        with row2:
-            if stats.get("by_experience_level"):
-                fig_exp = px.bar(
-                    x=list(stats["by_experience_level"].keys()),
-                    y=list(stats["by_experience_level"].values()),
-                    title="CVs by Experience Level",
-                    template="plotly_dark",
-                    color=list(stats["by_experience_level"].values()),
-                    color_continuous_scale="Viridis",
-                )
-                fig_exp.update_layout(showlegend=False, coloraxis_showscale=False)
-                st.plotly_chart(fig_exp, use_container_width=True)
-
-        # Top Skills
-        st.subheader("🔥 Top Skills Across All CVs")
-        all_cvs_global = st.session_state.engine.get_all_cvs()
-        all_skills = []
-        for cv in all_cvs_global:
-            all_skills.extend(cv.get("skills", []))
-
-        if all_skills:
-            skill_counts = Counter(all_skills)
-            top_skills = skill_counts.most_common(20)
-            fig_skills = px.bar(
-                x=[s[0] for s in top_skills],
-                y=[s[1] for s in top_skills],
-                labels={"x": "Skill", "y": "Count"},
-                title="Most Common Skills",
-                color=[s[1] for s in top_skills],
-                color_continuous_scale="Viridis",
-                template="plotly_dark",
-            )
-            fig_skills.update_xaxes(tickangle=-40)
-            fig_skills.update_layout(coloraxis_showscale=False)
-            st.plotly_chart(fig_skills, use_container_width=True)
-
-        # Education breakdown
-        if stats.get("by_education_level"):
-            fig_edu = px.pie(
-                names=list(stats["by_education_level"].keys()),
-                values=list(stats["by_education_level"].values()),
-                title="CVs by Education Level",
-                template="plotly_dark",
-            )
-            st.plotly_chart(fig_edu, use_container_width=True)
-
-# ──────────────────────────────────────────────────────────── #
-#  TAB 4 – ALL CVS                                             #
-# ──────────────────────────────────────────────────────────── #
-with tab4:
-    st.markdown("### 📋 All CVs in Database")
-
+with all_tab:
+    st.markdown('<div class="section-title">All CVs</div>', unsafe_allow_html=True)
     if total_cvs == 0:
-        st.info("📋 No CVs yet – upload some in Tab 1.")
-    elif st.session_state.engine:
-        filter_col, sort_col = st.columns(2)
-        with filter_col:
-            filter_field = st.selectbox(
-                "Filter by industry",
-                ["All"] + get_all_fields(),
-                key="tab4_filter",
-            )
-        with sort_col:
-            sort_by = st.selectbox(
-                "Sort by",
-                ["Name (A–Z)", "Experience (High–Low)", "Education"],
-                key="tab4_sort",
-            )
+        st.info("No CVs uploaded yet.")
+    else:
+        f_col, s_col = st.columns(2)
+        with f_col:
+            filter_field = st.selectbox("Filter by industry", ["All"] + all_fields, key="filter_field")
+        with s_col:
+            sort_by = st.selectbox("Sort by", ["Name A-Z", "Experience high-low", "Experience low-high"], key="sort_by")
 
         field_arg = None if filter_field == "All" else filter_field
-        all_cvs = st.session_state.engine.get_all_cvs(field=field_arg)
+        all_cvs = engine.get_all_cvs(field=field_arg)
+        if sort_by == "Experience high-low":
+            all_cvs.sort(key=lambda item: float(item.get("years_of_experience", 0) or 0), reverse=True)
+        elif sort_by == "Experience low-high":
+            all_cvs.sort(key=lambda item: float(item.get("years_of_experience", 0) or 0))
+        else:
+            all_cvs.sort(key=lambda item: (item.get("name") or "").lower())
 
-        # Sort
-        if sort_by == "Experience (High–Low)":
-            all_cvs.sort(key=lambda x: x.get("years_of_experience", 0), reverse=True)
-        elif sort_by == "Name (A–Z)":
-            all_cvs.sort(key=lambda x: x.get("name", "").lower())
-        elif sort_by == "Education":
-            edu_order = {"PhD": 0, "Master's": 1, "Bachelor's": 2, "Associate/Diploma": 3, "Not specified": 4}
-            all_cvs.sort(key=lambda x: edu_order.get(x.get("education_level", "Not specified"), 5))
-
-        st.caption(f"Showing {len(all_cvs)} CV(s)")
-
-        # Export all
-        if all_cvs:
-            df_all = cvs_to_dataframe(all_cvs)
-            csv_all = df_all.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "📥 Export All CVs (CSV)",
-                data=csv_all,
-                file_name=f"all_cvs_{datetime.now():%Y%m%d_%H%M%S}.csv",
-                mime="text/csv",
-            )
-
-        for idx, cv in enumerate(all_cvs, 1):
-            with st.expander(
-                f"📄 {idx}. {cv['name']}  |  {cv.get('experience_level', 'N/A')}"
-                f"  |  {cv.get('years_of_experience', 0):.0f} yrs exp"
-            ):
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    st.markdown(f"**📧 Email:** {cv.get('email', 'N/A')}")
-                    st.markdown(f"**📍 Location:** {cv.get('location', 'N/A')}")
-                    st.markdown(f"**🎓 Education:** {cv.get('education_level', 'N/A')}")
-                    st.markdown(f"**🏭 Field:** {cv.get('field', 'N/A')}")
-                with c2:
-                    st.markdown("**🔧 Skills:**")
-                    st.caption(", ".join(cv.get("skills", [])[:15]) or "None listed")
-                    if cv.get("certifications"):
-                        st.markdown("**📜 Certifications:**")
-                        st.caption(", ".join(cv["certifications"][:5]))
-
-# ──────────────────────────────────────────────────────────── #
-#  TAB 5 – FAVOURITES                                          #
-# ──────────────────────────────────────────────────────────── #
-with tab5:
-    st.markdown("### ⭐ Favourite Candidates")
-
-    favs = st.session_state.get("favorites", [])
-    if not favs:
-        st.info("⭐ No favourites yet – click the star button on search results.")
-    else:
-        # Export
-        df_favs = cvs_to_dataframe(favs)
-        csv_favs = df_favs.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "📥 Export Favourites (CSV)",
-            data=csv_favs,
-            file_name=f"favourites_{datetime.now():%Y%m%d_%H%M%S}.csv",
-            mime="text/csv",
+            "Export all CVs CSV",
+            cvs_to_dataframe(all_cvs).to_csv(index=False).encode("utf-8"),
+            f"all_cvs_{datetime.now():%Y%m%d}.csv",
+            "text/csv",
+            use_container_width=True,
         )
+        for idx, candidate in enumerate(all_cvs, 1):
+            render_candidate(candidate, idx, allow_favorite=True)
 
-        for idx, fav in enumerate(favs, 1):
-            score_pct = clamp_score(fav.get("final_score", 0))
-            with st.expander(f"⭐ #{idx} – {fav.get('name', 'Candidate')}  |  {score_pct:.1f}% match"):
-                f1, f2 = st.columns(2)
-                with f1:
-                    st.markdown(f"**💼 Experience:** {fav.get('years_of_experience', 0):.0f} years")
-                    st.markdown(f"**🎓 Education:** {fav.get('education_level', 'N/A')}")
-                    st.markdown(f"**📧 Email:** {fav.get('email', 'N/A')}")
-                with f2:
-                    st.markdown(f"**🔧 Skills ({len(fav.get('skills', []))}):**")
-                    st.caption(", ".join(fav.get("skills", [])[:10]))
-                st.markdown("**Match Reason:**")
-                st.info(fav.get("match_reason", "N/A"))
-
-                if st.button("🗑️ Remove", key=f"remove_fav_{idx}"):
-                    st.session_state.favorites.remove(fav)
-                    st.rerun()
-
-# ──────────────────────────────────────────────────────────── #
-#  TAB 6 – HELP                                                #
-# ──────────────────────────────────────────────────────────── #
-with tab6:
-    st.markdown("### ℹ️ Help & Information")
-
-    h1, h2 = st.columns(2)
-    with h1:
-        st.markdown(
-            """
-            <div class="modern-card">
-                <h4 style="color:white;">🚀 Quick Start</h4>
-                <ol style="color:#e0e0e0;">
-                    <li>Select your industry from the sidebar</li>
-                    <li>Upload CVs (PDF, DOCX, TXT)</li>
-                    <li>Adjust scoring weights to match your priorities</li>
-                    <li>Enter a job description in Search</li>
-                    <li>Export results as CSV</li>
-                </ol>
-            </div>
-            """,
-            unsafe_allow_html=True,
+with shortlist_tab:
+    st.markdown('<div class="section-title">Shortlisted candidates</div>', unsafe_allow_html=True)
+    favorites = st.session_state.get("favorites", [])
+    if not favorites:
+        st.info("No shortlisted candidates yet. Add candidates from Search or All CVs.")
+    else:
+        st.download_button(
+            "Export shortlist CSV",
+            cvs_to_dataframe(favorites).to_csv(index=False).encode("utf-8"),
+            f"shortlist_{datetime.now():%Y%m%d}.csv",
+            "text/csv",
+            use_container_width=True,
         )
-        st.markdown(
-            """
-            <div class="modern-card" style="margin-top:1rem;">
-                <h4 style="color:white;">🎯 Key Features</h4>
-                <ul style="color:#e0e0e0;">
-                    <li>🔍 Semantic search (768-D embeddings)</li>
-                    <li>🔄 Cross-encoder re-ranking</li>
-                    <li>📊 Real-time analytics dashboard</li>
-                    <li>⭐ Favourites with export</li>
-                    <li>🎛️ Per-field dynamic weight defaults</li>
-                    <li>📥 CSV export for all views</li>
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with h2:
-        st.markdown(
-            """
-            <div class="modern-card">
-                <h4 style="color:white;">🔬 How It Works</h4>
-                <p style="color:#e0e0e0;">
-                    Each CV is converted to a 768-dimensional vector using
-                    <strong>all-mpnet-base-v2</strong>. Searches embed your
-                    job description the same way, then find the closest
-                    vectors in ChromaDB (cosine similarity).
-                </p>
-                <p style="color:#e0e0e0;">
-                    A weighted scoring layer boosts candidates based on
-                    skills, experience, education, projects, and
-                    certifications. An optional cross-encoder re-ranker
-                    (<em>ms-marco-MiniLM-L-6-v2</em>) adds a second pass
-                    of relevance scoring.
-                </p>
-                <code style="color:#e0e0e0;">
-                    CV → Embed → ChromaDB → Weighted Score → Re-rank → Results
-                </code>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-            <div class="modern-card" style="margin-top:1rem;">
-                <h4 style="color:white;">💡 Tips for Better Results</h4>
-                <ul style="color:#e0e0e0;">
-                    <li>Use natural language job descriptions, not keyword lists</li>
-                    <li>Mention required years of experience explicitly</li>
-                    <li>Enable re-ranking for the most accurate ordering</li>
-                    <li>Adjust weights based on role seniority</li>
-                    <li>Use the minimum score filter to remove weak matches</li>
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        for idx, candidate in enumerate(favorites, 1):
+            render_candidate(candidate, idx, allow_favorite=False)
+            if st.button("Remove from shortlist", key=f"remove_fav_{idx}_{candidate_key(candidate)}"):
+                favorites.remove(candidate)
+                st.session_state.favorite_keys.discard(candidate_key(candidate))
+                st.rerun()
 
+with help_tab:
+    st.markdown('<div class="section-title">Help</div>', unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="custom-divider"></div>
-        <div style="text-align:center;padding:1rem;">
-            <h4 style="color:white;">📚 Technology Stack</h4>
-            <p style="color:#a0a0a0;">
-                Streamlit · Sentence-Transformers · ChromaDB · Plotly · PyPDF2 · python-docx · Pandas
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        **Recommended workflow**
+
+        1. Sign in with Google or email.
+        2. Select the target industry in the sidebar.
+        3. Upload PDF, DOCX, or TXT CV files.
+        4. Paste a detailed job description in Search.
+        5. Adjust scoring weights if one hiring signal matters more than another.
+        6. Add strong matches to the shortlist and export CSV.
+
+        **Important notes**
+
+        Google login now uses a hash-to-query bridge because Supabase returns OAuth tokens in the URL hash and Streamlit cannot read hashes on the server. The bridge converts the token into query parameters, completes the Supabase session, clears the URL, and opens the dashboard.
+
+        Every ChromaDB record is scoped to the logged-in Supabase user id. This prevents the previous `default` session behavior from mixing users' uploaded CVs.
+        """
     )
 
-# ============================================================ #
-#  FOOTER                                                       #
-# ============================================================ #
-st.markdown(
-    """
-    <div class="footer">
-        <p>CV Screening Pro v2.1 · AI-Powered Recruitment Platform · © 2024</p>
-        <p style="font-size:.7rem;">
-            Embedding: all-mpnet-base-v2 (768 D) · Re-ranker: ms-marco-MiniLM-L-6-v2 · DB: ChromaDB (cosine)
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+st.caption("TalentHire Pro | Private AI recruitment workspace")
